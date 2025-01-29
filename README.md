@@ -1,6 +1,3 @@
-# Define the README content
-readme_content = """# README: Predicting Credit Card Default & Optimal Communication Time
-
 ## 1. Introduction
 This project involves two major predictive modeling tasks:
 1. **Predicting Credit Card Defaults:** Using machine learning to predict the probability of credit card defaults based on transaction history.
