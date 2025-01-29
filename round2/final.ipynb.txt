@@ -1,0 +1,308 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from scipy.stats import zscore
+from sklearn.feature_selection import VarianceThreshold
+from tqdm import tqdm
+
+sample_df = pd.read_csv('/mnt/data/sample_dataset.csv')
+
+sample_df['send_timestamp'] = pd.to_datetime(sample_df['send_timestamp'], errors='coerce')
+sample_df['open_timestamp'] = pd.to_datetime(sample_df['open_timestamp'], errors='coerce')
+
+invalid_timestamps = sample_df[sample_df['open_timestamp'].isna()]
+send_timestamp_range = (sample_df['send_timestamp'].min(), sample_df['send_timestamp'].max())
+open_timestamp_range = (sample_df['open_timestamp'].min(), sample_df['open_timestamp'].max())
+
+plt.figure(figsize=(12, 6))
+sns.countplot(x='target_slot', data=sample_df, order=sample_df['target_slot'].value_counts().index)
+plt.xticks(rotation=45)
+plt.show()
+
+engagement_hour = sample_df.groupby('send_hour')['target_slot'].count().reset_index()
+plt.figure(figsize=(10, 5))
+sns.barplot(x='send_hour', y='target_slot', data=engagement_hour)
+plt.show()
+
+engagement_day = sample_df['send_day'].value_counts()
+plt.figure(figsize=(10, 5))
+sns.barplot(x=engagement_day.index, y=engagement_day.values)
+plt.show()
+
+plt.figure(figsize=(12, 6))
+sns.histplot(sample_df['emails_sent'], bins=20, kde=True)
+plt.show()
+
+plt.figure(figsize=(12, 6))
+sns.histplot(sample_df['open_rate'], bins=10, kde=False)
+plt.show()
+
+plt.figure(figsize=(12, 6))
+sns.countplot(y='product_category', data=sample_df, order=sample_df['product_category'].value_counts().index)
+plt.show()
+
+plt.figure(figsize=(12, 6))
+sns.countplot(y='product_sub_category', data=sample_df, order=sample_df['product_sub_category'].value_counts().index[:10])
+plt.show()
+
+sample_df['open_timestamp'] = sample_df['open_timestamp'].fillna("no_engagement")
+
+numerical_cols = sample_df.select_dtypes(include=['float', 'int']).columns
+sample_df[numerical_cols] = sample_df[numerical_cols].fillna(sample_df[numerical_cols].median())
+
+for col in ['product_category', 'product_sub_category', 'send_day']:
+    le = LabelEncoder()
+    sample_df[col] = le.fit_transform(sample_df[col])
+
+scaler = MinMaxScaler()
+scaled_cols = ['emails_sent', 'emails_opened']
+sample_df[scaled_cols] = scaler.fit_transform(sample_df[scaled_cols])
+
+sample_df['engagement_delay'] = (pd.to_datetime(sample_df['open_timestamp'], errors='coerce') -
+                                 pd.to_datetime(sample_df['send_timestamp'], errors='coerce')).dt.total_seconds() / 3600
+sample_df['engagement_delay'] = sample_df['engagement_delay'].fillna(0)
+
+correlation_matrix = sample_df.corr()
+plt.figure(figsize=(16, 12))
+sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap='coolwarm')
+plt.show()
+
+target_correlation = correlation_matrix['target_slot'].drop('target_slot', errors='ignore').sort_values(ascending=False)
+plt.figure(figsize=(12, 6))
+sns.barplot(x=target_correlation.index, y=target_correlation.values)
+plt.xticks(rotation=45)
+plt.show()
+
+selector = VarianceThreshold(threshold=0.01)
+numerical_features = sample_df.select_dtypes(include=['float64', 'int64']).columns
+reduced_features = selector.fit_transform(sample_df[numerical_features])
+selected_columns = numerical_features[selector.get_support()]
+sample_df = pd.concat([sample_df[selected_columns], sample_df.drop(columns=numerical_features)], axis=1)
+
+z_threshold = 3
+for col in sample_df.select_dtypes(include=['float64', 'int64']):
+    sample_df = sample_df[(zscore(sample_df[col]) < z_threshold) | (zscore(sample_df[col]).isnull())]
+
+processed_path = '/mnt/data/processed_sample.csv'
+sample_df.to_csv(processed_path, index=False)
+
+import pandas as pd
+import numpy as np
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.preprocessing import MinMaxScaler
+from tqdm import tqdm
+
+df = pd.read_csv('/content/drive/MyDrive/data/train_cdna_data.csv')
+missing_threshold = 0.5
+missing_ratios = df.isnull().mean()
+df = df.loc[:, missing_ratios < missing_threshold]
+
+for col in tqdm(df.columns):
+    if df[col].dtype in ['float64', 'int64']:
+        df[col].fillna(df[col].median(), inplace=True)
+    else:
+        df[col].fillna(df[col].mode()[0], inplace=True)
+
+for col in tqdm(df.columns):
+    if df[col].dtype == 'object':
+        try:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        except:
+            pass
+        if df[col].dtype != 'int64' and df[col].dtype != 'float64':
+            df[col] = df[col].astype('category')
+
+numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns
+selector = VarianceThreshold(threshold=0.01)
+df_num = selector.fit_transform(df[numerical_cols])
+selected_columns = numerical_cols[selector.get_support()]
+df = pd.concat([df[selected_columns], df.drop(columns=numerical_cols)], axis=1)
+
+correlation_matrix = df.corr()
+correlated_features = set()
+threshold = 0.9
+
+for i in tqdm(range(len(correlation_matrix.columns))):
+    for j in range(i):
+        if abs(correlation_matrix.iloc[i, j]) > threshold:
+            colname = correlation_matrix.columns[i]
+            correlated_features.add(colname)
+
+df = df.drop(columns=correlated_features)
+
+single_value_columns = [col for col in df.columns if df[col].nunique() == 1]
+df = df.drop(columns=single_value_columns)
+
+numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns
+binary_cols = [col for col in numerical_cols if df[col].nunique() == 2]
+non_binary_cols = [col for col in numerical_cols if col not in binary_cols]
+scaler = MinMaxScaler()
+df[non_binary_cols] = scaler.fit_transform(df[non_binary_cols])
+
+df1 = pd.read_csv('/content/drive/MyDrive/data/Test/test_cdna_data.csv')
+df['customer_code'] = df1['CUSTOMER_CODE']
+
+df10 = df.copy()
+df10['batch_date'] = df1['batch_date']
+
+df20 = pd.read_csv('/content/drive/MyDrive/data/train_action_history.csv')
+df20.drop(columns=['Offer_id', 'Offer_subid', 'batch_id'], inplace=True)
+df20['send_timestamp'] = pd.to_datetime(df20['send_timestamp'], errors='coerce')
+df20['open_timestamp'] = pd.to_datetime(df20['open_timestamp'], errors='coerce')
+df20['send_date'] = df20['send_timestamp'].dt.date
+df20['open_date'] = df20['open_timestamp'].dt.date
+df20_clean = df20.dropna(subset=['customer_code'])
+df10_clean = df10.dropna(subset=['customer_code'])
+
+with tqdm(total=len(df10_clean) + len(df20_clean)) as pbar:
+    merged_df = pd.merge(df10_clean, df20_clean, on='customer_code', how='outer')
+    pbar.update(len(df10_clean) + len(df20_clean))
+
+merged_df['send_timestamp'] = pd.to_datetime(merged_df['send_timestamp'], errors='coerce')
+merged_df['open_timestamp'] = pd.to_datetime(merged_df['open_timestamp'], errors='coerce')
+
+def calculate_28_slots(timestamp):
+    if pd.isnull(timestamp):
+        return None
+    day_of_week = timestamp.weekday()
+    hour = timestamp.hour
+    if 9 <= hour < 12:
+        time_slot = 1
+    elif 12 <= hour < 15:
+        time_slot = 2
+    elif 15 <= hour < 18:
+        time_slot = 3
+    elif 18 <= hour < 21:
+        time_slot = 4
+    else:
+        return None
+    return day_of_week * 4 + time_slot
+
+merged_df['send_slot'] = merged_df['send_timestamp'].apply(calculate_28_slots)
+merged_df['open_slot'] = merged_df['open_timestamp'].apply(calculate_28_slots)
+merged_df['flag'] = merged_df.apply(lambda row: 1 if row['send_slot'] == row['open_slot'] else 0, axis=1)
+
+columns_to_drop = ['batch_date', 'open_date', 'send_date']
+merged_df = merged_df.drop(columns=[col for col in columns_to_drop if col in merged_df.columns])
+
+merged_df.to_csv('/content/drive/MyDrive/data/TESTFINALDATA.csv', index=False)
+
+
+
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from xgboost import XGBClassifier
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+
+print("Loading and preparing data...")
+df = pd.read_csv('/content/drive/MyDrive/data/finaldataset.csv')
+df = df[~((df['flag'] == 0) & (df['open_slot'].isna()))]
+df['slot'] = df['open_slot'].fillna(df['send_slot'])
+df.drop(columns=['send_timestamp', 'open_timestamp', 'original_index', 'send_slot', 'open_slot'], inplace=True)
+df.drop_duplicates(inplace=True)
+df = df.drop(columns=['v5', 'v7', 'v30', 'v229', 'v230'], errors='ignore')
+df = df.dropna(subset=['slot'])
+
+numeric_columns = df.select_dtypes(include=['number']).columns
+for col in numeric_columns:
+    median_value = df[col].median()
+    df[col].fillna(median_value, inplace=True)
+
+print("Encoding categorical features...")
+df = pd.get_dummies(df, columns=['product_category', 'product_sub_category'])
+df['slot'] = df['slot'] - 1
+df['slot'] = df['slot'].astype(int)
+
+print("Feature engineering...")
+df['hour_of_send'] = pd.to_datetime(df['send_timestamp']).dt.hour
+df['day_of_week'] = pd.to_datetime(df['send_timestamp']).dt.weekday
+df['is_weekend'] = df['day_of_week'].apply(lambda x: 1 if x >= 5 else 0)
+columns_to_drop = ['send_timestamp', 'open_timestamp', 'flag', 'original_index']
+df.drop(columns=columns_to_drop, inplace=True)
+
+target_variable = df['slot']
+class_counts = target_variable.value_counts()
+valid_classes = class_counts[class_counts >= 2].index
+df = df[df['slot'].isin(valid_classes)]
+
+print("Splitting data...")
+X = df.drop(columns=['slot'])
+y = df['slot']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+print("Training the XGBoost model...")
+xgb_model = XGBClassifier(
+    n_estimators=100,
+    max_depth=6,
+    learning_rate=0.1,
+    objective='multi:softprob',
+    num_class=28,
+    eval_metric='mlogloss',
+    random_state=42,
+    use_label_encoder=False
+)
+
+with tqdm(total=1, desc="Training Progress", unit="iterations") as progress_bar:
+    xgb_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=True)
+    progress_bar.update(1)
+
+print("\nEvaluating model...")
+y_pred = xgb_model.predict(X_test)
+accuracy = (y_pred == y_test).mean()
+print(f"Accuracy: {accuracy:.4f}")
+
+print("\nGenerating slot rankings...")
+slot_probabilities = xgb_model.predict_proba(X_test)
+ranked_slots = np.argsort(-slot_probabilities, axis=1) + 1
+
+predicted_results = pd.DataFrame({
+    'customer_code': X_test.index,
+    'predicted_slots_order': [list(row) for row in ranked_slots],
+    'actual_slot': y_test.values + 1
+})
+
+predicted_results.to_csv('/content/drive/MyDrive/data/Test/predicted_slots_with_actual.csv', index=False)
+
+print("\nAnalyzing feature importance...")
+plt.bar(range(len(xgb_model.feature_importances_)), xgb_model.feature_importances_)
+plt.xlabel('Feature Index')
+plt.ylabel('Importance')
+plt.title('Feature Importance')
+plt.show()
+
+print("\nAdding product category information...")
+category_mapping = df.set_index('customer_code')[['product_category', 'product_sub_category']]
+predicted_results = predicted_results.set_index('customer_code').join(category_mapping, how='left').reset_index()
+predicted_results.to_csv('/content/drive/MyDrive/data/Test/predicted_slots_with_categories.csv', index=False)
+
+df1 = pd.read_csv('/kaggle/input/finalfinal2/final.csv')
+df2 = pd.read_csv('/kaggle/input/finalfinal2/test_customers.csv')
+merged_df = pd.merge(df1, df2, on='customer_id', how='inner')
+merged_df.to_csv('/kaggle/working/merged_dataset.csv', index=False)
+
+import pandas as pd
+
+df1 = pd.read_csv('/kaggle/input/finalfinal2/final.csv')
+df2 = pd.read_csv('/kaggle/input/finalfinal2/test_customers.csv')
+
+df1['predicted_slots_order'] = df1['order']
+df1.drop(columns='order', inplace=True)
+df2['customer_code'] = df2['CUSTOMER_CODE']
+df2.drop(columns='CUSTOMER_CODE', inplace=True)
+
+df1_deduplicated = df1.drop_duplicates(subset='customer_code')
+final_result = pd.merge(df2, df1_deduplicated, on='customer_code', how='left')
+
+def add_one_to_slots(slot_list):
+    return ' '.join(str(int(slot) + 1) for slot in slot_list.split())
+
+final_result['predicted_slots_order'] = final_result['predicted_slots_order'].apply(add_one_to_slots)
+
+print(final_result)
+s
