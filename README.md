@@ -135,8 +135,3 @@ This project involves two major predictive modeling tasks:
 ### 📅 **Last Updated:** 2025
 """
 
-# Save the README as a Markdown file
-with open("README.md", "w") as file:
-    file.write(readme_content)
-
-print("README.md file has been created successfully!")
